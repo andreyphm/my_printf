@@ -11,14 +11,8 @@ _start:         call main
 
 ;---------------------------------------------------------------------------------------------------------------------                
 main:           mov rdi, msg
-                mov rsi, 'W'
-                mov rdx, 'A'
-                mov rcx, 'Y'
-                mov r8,  'I'
-                mov r9,  'S'
-                push '?'
-                push '?'
-                push '?'
+                mov rsi, string
+                mov rdx, '!'
                 call my_printf
 
                 push rbx
@@ -59,7 +53,7 @@ my_printf:          push rbp
                     xor r10, r10
                     mov rbp, rsp
 
-@@cycle:            mov bl, byte [msg + rax]
+@@cycle:            mov bl, byte [rdi + rax]
 
                     test bl, bl
                     jz @@output             ; if (bl == '\0') break
@@ -84,7 +78,7 @@ my_printf:          push rbp
 @@search_specifier:     cmp bl, [specifiers_array + r8]
                         jne .next
                         jmp qword [specifier + r8 * 8]            ; jump to specific jump table label
-.next:                  add r8, 1
+.next:                  inc r8
                         cmp r8, SPECIFIERS_ARRAY_LEN
                         jae @@cycle                     ; if it's not valid specifier then come back to str parse cycle
                         jmp @@search_specifier
@@ -100,6 +94,24 @@ my_printf:          push rbp
                             inc r10                                         ; increment arguments counter
                             jmp @@cycle
 
+                        case_s:
+                            call is_argument_in_register
+                            push rax
+                            push rsi
+                            mov rsi, qword [rbp + 8 * NUM_OF_HELPFUL_REGS]
+                            .copy_string:   mov al, [rsi]
+                                            test al, al
+                                            jz .stop_copy
+                                            mov [output_buffer + r13], al
+                                            inc rsi
+                                            inc r13
+                                            jmp .copy_string
+ .stop_copy:                pop rsi
+                            add rbp, 8
+                            inc r10
+                            pop rax
+                            jmp @@cycle
+
                         case_default:
                             jmp @@cycle
 
@@ -113,7 +125,11 @@ my_printf:          push rbp
                 pop r13
                 pop r12
                 pop rbx
-                add rsp, NUM_OF_ARGUMENT_REGS * 8
+                pop rsi
+                pop rdx
+                pop rcx
+                pop r8
+                pop r9
                 pop rbp
                 ret
 
@@ -138,11 +154,11 @@ is_argument_in_register:    cmp r10, NUM_OF_ARGUMENT_REGS
 my_strlen:      push rbx
                 xor rax, rax
 
-.cycle:         mov bl, byte [msg + rax]
-                add rax, 1
+.cycle:         mov bl, byte [rsi + rax]
+                inc rax
                 test bl, bl
                 jnz .cycle
-                sub rax, 1
+                dec rax
 
                 pop rbx
                 ret
@@ -153,17 +169,19 @@ align 8
 
 specifier:
     dq case_c               ; zero option: %c
+    dq case_s               ; first option: %s
     dq case_default         ; last option: come back to @@cycle
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .data
 
-SPECIFIERS_ARRAY_LEN    equ 1
+SPECIFIERS_ARRAY_LEN    equ 2
 NUM_OF_HELPFUL_REGS     equ 3
-NUM_OF_ARGUMENT_REGS    equ 5
+NUM_OF_ARGUMENT_REGS    equ 2
 
-msg:                    db "Andrey %c%c%c %c%c %c%c%c", 0
-specifiers_array:       db 'c' 
+msg:                    db "%s %c", 0
+string:                 db "Sickfault", 0
+specifiers_array:       db 'c', 's'
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .bss
