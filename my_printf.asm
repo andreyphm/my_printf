@@ -1,41 +1,70 @@
 section .text
 
-global _start                       ; predefined entry points names for ld
+global _start                       ; predefined entry points names
 global my_printf
 
 _start:         call main
 
-                mov rax, 0x3c           ; exit64 (rdi = error code)
+                mov rax, 0x3c             ; exit64 (rdi = error code)
                 xor rdi, rdi
                 syscall
 
 ;---------------------------------------------------------------------------------------------------------------------                
-main:           mov rsi, msg
-                mov rdi, 'I'
+main:           mov rdi, msg
+                mov rsi, 'W'
+                mov rdx, 'A'
+                mov rcx, 'Y'
+                mov r8,  'I'
+                mov r9,  'S'
+                push '?'
+                push '?'
+                push '?'
                 call my_printf
 
-                ret
+                push rbx
+                mov rbx, 5
+                cmp rbx, NUM_OF_ARGUMENT_REGS
+                pop rbx
+                ja .next                        ; if there are no stack arguments then ret 
+                sub r10, NUM_OF_ARGUMENT_REGS
+                mov rax, r10
+                push rbx
+                mov rbx, 8
+                mul rbx
+                pop rdx
+                add rsp, rax                    ; go to main return address
+
+.next:          ret
 
 ;---------------------------------------------------------------------------------------------------------------------
-;Output message with % specifiers to console.
-;Arguments: rsi = format string, rdi - printf argument
-;Return value: rax = number of symbols in output
+;Output message to console.
+;Arguments: rdi = format string, printf arguments according to calling convention
+;Return value: rax = number of symbols in output, r10 = number of specifiers detected
 ;Destroy: r8
 ;---------------------------------------------------------------------------------------------------------------------
-my_printf:          xor rax, rax
+my_printf:          push rbp
+                    push r9
+                    push r8
+                    push rcx
+                    push rdx
+                    push rsi                ; for ease of iteration
+
                     push rbx
-                    xor rbx, rbx
                     push r12
                     push r13
-                    xor r13, r13
+                    xor rax, rax
+                    xor rbx, rbx
                     xor r12, r12
+                    xor r13, r13
+                    xor r10, r10
+                    mov rbp, rsp
 
 @@cycle:            mov bl, byte [msg + rax]
 
                     test bl, bl
                     jz @@output             ; if (bl == '\0') break
 
-                    add rax, 1              ; symbol counter in input += 1
+                    inc rax                 ; symbol counter in input += 1
 
                     cmp r12b, 1
                     je @@switch             ; specifier flag check
@@ -43,7 +72,7 @@ my_printf:          xor rax, rax
                     cmp bl, '%'
                     je @@percent_found
                     mov byte [output_buffer + r13], bl
-                    add r13, 1                          ; symbol counter in output += 1
+                    inc r13                             ; symbol counter in output += 1
                     jmp @@cycle
 
 @@percent_found:    mov r12b, 1             ; specifier flag on
@@ -61,24 +90,44 @@ my_printf:          xor rax, rax
                         jmp @@search_specifier
 
                         case_c: 
-                            mov byte [output_buffer + r13], dil
-                            add r13, 1
+                            call is_argument_in_register
+                            push rbx
+                            mov bl, byte [rbp + 8 * NUM_OF_HELPFUL_REGS]
+                            mov byte [output_buffer + r13], bl              ; write argument value to output buffer
+                            pop rbx
+                            add rbp, 8                                      ; go to next argument
+                            inc r13
+                            inc r10                                         ; increment arguments counter
                             jmp @@cycle
 
                         case_default:
                             jmp @@cycle
 
-@@output:       mov rax, 0x01
-                mov rdi, 0x01           ; file handle = console output
+@@output:       mov rdi, 0x01           ; file handle = console output
                 mov rsi, output_buffer
                 mov rdx, r13            ; rdx = output length
 
+                mov rax, 0x01
                 syscall                 ; write64(rdi, rsi, rdx)
 
                 pop r13
                 pop r12
                 pop rbx
+                add rsp, NUM_OF_ARGUMENT_REGS * 8
+                pop rbp
                 ret
+
+;---------------------------------------------------------------------------------------------------------------------
+;Compare r10 with NUM_OF_ARGUMENT_REGS. rbp -= 8 if equal.
+;Arguments: r10
+;Return value: rbp or rbp -= 8
+;Destroy: -
+;---------------------------------------------------------------------------------------------------------------------
+is_argument_in_register:    cmp r10, NUM_OF_ARGUMENT_REGS
+                            jne .exit
+                            add rbp, 16
+
+.exit:                      ret                       
 
 ;---------------------------------------------------------------------------------------------------------------------
 ;Calculates length of null-terminated string.
@@ -110,8 +159,10 @@ specifier:
 section .data
 
 SPECIFIERS_ARRAY_LEN    equ 1
+NUM_OF_HELPFUL_REGS     equ 3
+NUM_OF_ARGUMENT_REGS    equ 5
 
-msg:                    db "Andrey%c", 0
+msg:                    db "Andrey %c%c%c %c%c %c%c%c", 0
 specifiers_array:       db 'c' 
 
 ;---------------------------------------------------------------------------------------------------------------------
