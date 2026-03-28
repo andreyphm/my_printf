@@ -1,5 +1,7 @@
 section .text
 
+%include "macros.inc"
+
 global _start                       ; predefined entry points names
 global my_printf
 
@@ -11,30 +13,24 @@ _start:         call main
 
 ;---------------------------------------------------------------------------------------------------------------------                
 main:           mov rdi, msg
-                mov rsi, string
-                mov rdx, '!'
+                mov rsi, 0x20
                 call my_printf
-
-                push rbx
-                mov rbx, 5
-                cmp rbx, NUM_OF_ARGUMENT_REGS
-                pop rbx
-                ja .next                        ; if there are no stack arguments then ret 
-                sub r10, NUM_OF_ARGUMENT_REGS
-                mov rax, r10
-                push rbx
-                mov rbx, 8
-                mul rbx
-                pop rdx
-                add rsp, rax                    ; go to main return address
 
 .next:          ret
 
 ;---------------------------------------------------------------------------------------------------------------------
-;Output message to console.
-;Arguments: rdi = format string, printf arguments according to calling convention
-;Return value: rax = number of symbols in output, r10 = number of specifiers detected
-;Destroy: r8
+; Output message to console.
+;
+; Arguments: 
+;   rdi = format string
+;   printf arguments according to AMD calling convention (rsi, rdx, rcx, r8, r9, stack)
+;
+; Return value: 
+;   rax = number of symbols in output
+;   r10 = number of processed arguments
+;
+; Destroy: 
+;   r11
 ;---------------------------------------------------------------------------------------------------------------------
 my_printf:          push rbp
                     push r9
@@ -52,6 +48,7 @@ my_printf:          push rbp
                     xor r13, r13
                     xor r10, r10
                     mov rbp, rsp
+                    mov r11, rbp
 
 @@cycle:            mov bl, byte [rdi + rax]
 
@@ -80,25 +77,23 @@ my_printf:          push rbp
                         jmp qword [specifier + r8 * 8]            ; jump to specific jump table label
 .next:                  inc r8
                         cmp r8, SPECIFIERS_ARRAY_LEN
-                        jae @@cycle                     ; if it's not valid specifier then come back to str parse cycle
+                        jae @@cycle                     ; if it's not valid specifier then come back to format string parse cycle
                         jmp @@search_specifier
 
                         case_c: 
-                            call is_argument_in_register
-                            push rbx
-                            mov bl, byte [rbp + 8 * NUM_OF_HELPFUL_REGS]
-                            mov byte [output_buffer + r13], bl              ; write argument value to output buffer
-                            pop rbx
-                            add rbp, 8                                      ; go to next argument
+                            call go_to_stack_args
+                            mov r8b, byte [r11 + FIRST_SAVED_ARG_OFFSET]
+                            mov byte [output_buffer + r13], r8b             ; write argument value to output buffer
+                            add r11, 8                                      ; go to next argument
                             inc r13
                             inc r10                                         ; increment arguments counter
                             jmp @@cycle
 
                         case_s:
-                            call is_argument_in_register
+                            call go_to_stack_args
                             push rax
                             push rsi
-                            mov rsi, qword [rbp + 8 * NUM_OF_HELPFUL_REGS]
+                            mov rsi, qword [r11 + FIRST_SAVED_ARG_OFFSET]
                             .copy_string:   mov al, [rsi]
                                             test al, al
                                             jz .stop_copy
@@ -106,11 +101,20 @@ my_printf:          push rbp
                                             inc rsi
                                             inc r13
                                             jmp .copy_string
- .stop_copy:                pop rsi
-                            add rbp, 8
-                            inc r10
-                            pop rax
-                            jmp @@cycle
+                                            .stop_copy:     pop rsi
+                                                            add r11, 8
+                                                            inc r10
+                                                            pop rax
+                                                            jmp @@cycle
+
+                        case_x:
+                            CASE_UNSIGNED 16, hex_digits
+
+                        case_b:
+                            CASE_UNSIGNED 2, bin_digits
+
+                        case_o:
+                            CASE_UNSIGNED 8, oct_digits
 
                         case_default:
                             jmp @@cycle
@@ -121,6 +125,7 @@ my_printf:          push rbp
 
                 mov rax, 0x01
                 syscall                 ; write64(rdi, rsi, rdx)
+                mov rax, r13            ; save number of output symbols
 
                 pop r13
                 pop r12
@@ -134,56 +139,106 @@ my_printf:          push rbp
                 ret
 
 ;---------------------------------------------------------------------------------------------------------------------
-;Compare r10 with NUM_OF_ARGUMENT_REGS. rbp -= 8 if equal.
-;Arguments: r10
-;Return value: rbp or rbp -= 8
-;Destroy: -
+; Jumps over my_printf return address if current number of arguments == NUM_OF_SAVED_ARG_REGS
+;
+; Arguments: 
+;   r10 = current number of arguments
+;
+; Return value:
+;   if (r10 == NUM_OF_SAVED_ARG_REGS) r11 += 16
+;
+; Destroy: -
 ;---------------------------------------------------------------------------------------------------------------------
-is_argument_in_register:    cmp r10, NUM_OF_ARGUMENT_REGS
-                            jne .exit
-                            add rbp, 16
-
-.exit:                      ret                       
+go_to_stack_args:   cmp r10, NUM_OF_SAVED_ARG_REGS
+                    jne .exit
+                    add r11, 16
+.exit:              ret
 
 ;---------------------------------------------------------------------------------------------------------------------
-;Calculates length of null-terminated string.
-;Arguments: rsi = string pointer
-;Return value: rax = string length
-;Destroy: -
+; Converts unsigned 64-bit number to string in arbitrary base.
+; First writes digits to temporary stack buffer in reverse order,
+; then copies them to destination buffer in direct order.
+;
+; Arguments:
+;   rdi = unsigned 64-bit number
+;   rsi = destination buffer pointer
+;   rbx = base
+;   rdx = digits table pointer
+;
+; Return value:
+;   rax = number of copied symbols
+;
+; Destroy:
+;   rcx, r8, rdx, rsi
 ;---------------------------------------------------------------------------------------------------------------------
-my_strlen:      push rbx
-                xor rax, rax
+uint_to_buffer:     push r12
+                    push r13
 
-.cycle:         mov bl, byte [rsi + rax]
-                inc rax
-                test bl, bl
-                jnz .cycle
-                dec rax
+                    mov r12, rsi            ; r12 = destination buffer
+                    mov r13, rdx            ; r13 = digits table pointer
+                    sub rsp, 64             ; enough for binary 64-bit representation (the maximum that will be required)
+                    lea rsi, [rsp + 63]     ; rsi = pointer to end of temp buffer
+                    mov rax, rdi
+                    xor rcx, rcx            ; digit counter
 
-                pop rbx
-                ret
+                    test rax, rax
+                    jnz .convert
+                    mov byte [rsi], '0'
+                    mov rcx, 1
+                    jmp .prepare_copy       ; process zero as a specific input
+
+.convert:           xor rdx, rdx
+                    div rbx                 ; rax /= rbx, rdx = rax % rbx
+                    mov r8b, [r13 + rdx]
+                    mov [rsi], r8b
+                    dec rsi
+                    inc rcx
+                    test rax, rax
+                    jnz .convert
+                    inc rsi
+
+.prepare_copy:      mov rax, rcx            ; return value = length of number
+
+.copy:              mov r8b, [rsi]
+                    mov [r12], r8b
+                    inc rsi
+                    inc r12
+                    dec rcx
+                    jnz .copy
+
+                    add rsp, 64             ; restore rsp
+                    pop r13
+                    pop r12
+                    ret
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .rodata
 align 8
 
 specifier:
-    dq case_c               ; zero option: %c
-    dq case_s               ; first option: %s
-    dq case_default         ; last option: come back to @@cycle
+    dq case_c               ; zero   option: %c
+    dq case_s               ; first  option: %s
+    dq case_x               ; second option: %x
+    dq case_b               ; third  option: %b
+    dq case_o               ; fourth option: %o
+    dq case_default         ; last   option: come back to @@cycle
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .data
 
-SPECIFIERS_ARRAY_LEN    equ 2
-NUM_OF_HELPFUL_REGS     equ 3
-NUM_OF_ARGUMENT_REGS    equ 2
+OUTPUT_BUFFER_SIZE      equ 256
+SPECIFIERS_ARRAY_LEN    equ 5
+FIRST_SAVED_ARG_OFFSET  equ 24
+NUM_OF_SAVED_ARG_REGS   equ 5
 
-msg:                    db "%s %c", 0
+msg:                    db "%o", 0
 string:                 db "Sickfault", 0
-specifiers_array:       db 'c', 's'
+specifiers_array:       db 'c', 's', 'x', 'b', 'o'
+hex_digits:             db "0123456789abcdef"
+bin_digits:             db "01"
+oct_digits:             db "01234567"
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .bss
 
-output_buffer:          resb 4096
+output_buffer:          resb OUTPUT_BUFFER_SIZE
