@@ -13,7 +13,7 @@ _start:         call main
 
 ;---------------------------------------------------------------------------------------------------------------------                
 main:           mov rdi, msg
-                mov rsi, 0x20
+                mov rsi, -20
                 call my_printf
 
 .next:          ret
@@ -116,6 +116,39 @@ my_printf:          push rbp
                         case_o:
                             CASE_UNSIGNED 8, oct_digits
 
+                        case_d:
+                            call go_to_stack_args
+                            push rax
+                            push rdi
+                            push rsi
+                            push rcx
+                            push rbx
+                            push rdx
+
+                            mov rdi, qword [r11 + FIRST_SAVED_ARG_OFFSET]
+                            test rdi, rdi
+                            jns .positive                           ; if rdi >= 0 then jmp
+                            mov byte [output_buffer + r13], '-'
+                            inc r13
+                            neg rdi
+
+                .positive:  mov rbx, 10
+                            mov rdx, dec_digits
+                            mov rsi, output_buffer
+                            add rsi, r13
+                            call uint_to_buffer
+                            add r13, rax
+
+                            pop rdx
+                            pop rbx
+                            pop rcx
+                            pop rsi
+                            pop rdi
+                            pop rax
+                            add r11, 8
+                            inc r10
+                            jmp @@cycle
+
                         case_default:
                             jmp @@cycle
 
@@ -123,8 +156,8 @@ my_printf:          push rbp
                 mov rsi, output_buffer
                 mov rdx, r13            ; rdx = output length
 
-                mov rax, 0x01
-                syscall                 ; write64(rdi, rsi, rdx)
+                mov rax, 0x01           ; write64(rdi, rsi, rdx)
+                syscall
                 mov rax, r13            ; save number of output symbols
 
                 pop r13
@@ -221,22 +254,24 @@ specifier:
     dq case_x               ; second option: %x
     dq case_b               ; third  option: %b
     dq case_o               ; fourth option: %o
+    dq case_d               ; fifth  option: %d
     dq case_default         ; last   option: come back to @@cycle
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .data
 
 OUTPUT_BUFFER_SIZE      equ 256
-SPECIFIERS_ARRAY_LEN    equ 5
+SPECIFIERS_ARRAY_LEN    equ 6
 FIRST_SAVED_ARG_OFFSET  equ 24
 NUM_OF_SAVED_ARG_REGS   equ 5
 
-msg:                    db "%o", 0
+msg:                    db "%d", 0
 string:                 db "Sickfault", 0
-specifiers_array:       db 'c', 's', 'x', 'b', 'o'
+specifiers_array:       db 'c', 's', 'x', 'b', 'o', 'd'
 hex_digits:             db "0123456789abcdef"
 bin_digits:             db "01"
 oct_digits:             db "01234567"
+dec_digits:             db "0123456789"
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .bss
