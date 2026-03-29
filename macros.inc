@@ -23,5 +23,5 @@
     pop rax
     add r11, 8
     inc r10
-    jmp @@cycle
+    jmp cycle
 %endmacro

@@ -15,11 +15,10 @@ _start:         call main
 main:           mov rdi, msg
                 mov rsi, -20
                 call my_printf
-
-.next:          ret
+                ret
 
 ;---------------------------------------------------------------------------------------------------------------------
-; Output message to console.
+; Output message to console
 ;
 ; Arguments: 
 ;   rdi = format string
@@ -50,35 +49,37 @@ my_printf:          push rbp
                     mov rbp, rsp
                     mov r11, rbp
 
-@@cycle:            mov bl, byte [rdi + rax]
+cycle:              mov bl, byte [rdi + rax]
 
                     test bl, bl
-                    jz @@output             ; if (bl == '\0') break
+                    jz output             ; if (bl == '\0') break
 
                     inc rax                 ; symbol counter in input += 1
 
                     cmp r12b, 1
-                    je @@switch             ; specifier flag check
+                    je switch             ; specifier flag check
 
                     cmp bl, '%'
-                    je @@percent_found
+                    je percent_found
                     mov byte [output_buffer + r13], bl
                     inc r13                             ; symbol counter in output += 1
-                    jmp @@cycle
+                    jmp cycle
 
-@@percent_found:    mov r12b, 1             ; specifier flag on
-                    jmp @@cycle
+percent_found:      mov r12b, 1             ; specifier flag on
+                    jmp cycle
 
-@@switch:               xor r12b, r12b          ; specifier flag off
+switch:                 xor r12b, r12b          ; specifier flag off
+                        cmp bl, '%'
+                        je print_percent
                         xor r8, r8
 
-@@search_specifier:     cmp bl, [specifiers_array + r8]
-                        jne .next
+search_specifier:       cmp bl, [specifiers_array + r8]
+                        jne search_next
                         jmp qword [specifier + r8 * 8]            ; jump to specific jump table label
-.next:                  inc r8
+search_next:            inc r8
                         cmp r8, SPECIFIERS_ARRAY_LEN
-                        jae @@cycle                     ; if it's not valid specifier then come back to format string parse cycle
-                        jmp @@search_specifier
+                        jae cycle                     ; if it's not valid specifier then come back to format string parse cycle
+                        jmp search_specifier
 
                         case_c: 
                             call go_to_stack_args
@@ -87,25 +88,25 @@ my_printf:          push rbp
                             add r11, 8                                      ; go to next argument
                             inc r13
                             inc r10                                         ; increment arguments counter
-                            jmp @@cycle
+                            jmp cycle
 
                         case_s:
                             call go_to_stack_args
                             push rax
                             push rsi
                             mov rsi, qword [r11 + FIRST_SAVED_ARG_OFFSET]
-                            .copy_string:   mov al, [rsi]
+                            copy_string:   mov al, [rsi]
                                             test al, al
-                                            jz .stop_copy
+                                            jz stop_copy
                                             mov [output_buffer + r13], al
                                             inc rsi
                                             inc r13
-                                            jmp .copy_string
-                                            .stop_copy:     pop rsi
+                                            jmp copy_string
+                                            stop_copy:     pop rsi
                                                             add r11, 8
                                                             inc r10
                                                             pop rax
-                                                            jmp @@cycle
+                                                            jmp cycle
 
                         case_x:
                             CASE_UNSIGNED 16, hex_digits
@@ -127,12 +128,12 @@ my_printf:          push rbp
 
                             mov rdi, qword [r11 + FIRST_SAVED_ARG_OFFSET]
                             test rdi, rdi
-                            jns .positive                           ; if rdi >= 0 then jmp
+                            jns case_d_positive                           ; if rdi >= 0 then jmp
                             mov byte [output_buffer + r13], '-'
                             inc r13
                             neg rdi
 
-                .positive:  mov rbx, 10
+        case_d_positive:    mov rbx, 10
                             mov rdx, dec_digits
                             mov rsi, output_buffer
                             add rsi, r13
@@ -147,12 +148,16 @@ my_printf:          push rbp
                             pop rax
                             add r11, 8
                             inc r10
-                            jmp @@cycle
+                            jmp cycle
 
                         case_default:
-                            jmp @@cycle
+                            jmp cycle
 
-@@output:       mov rdi, 0x01           ; file handle = console output
+print_percent:          mov byte [output_buffer + r13], bl
+                        inc r13                             ; symbol counter in output += 1
+                        jmp cycle                                
+
+output:         mov rdi, 0x01           ; file handle = console output
                 mov rsi, output_buffer
                 mov rdx, r13            ; rdx = output length
 
@@ -188,9 +193,9 @@ go_to_stack_args:   cmp r10, NUM_OF_SAVED_ARG_REGS
 .exit:              ret
 
 ;---------------------------------------------------------------------------------------------------------------------
-; Converts unsigned 64-bit number to string in arbitrary base.
+; Converts unsigned 64-bit number to string in arbitrary base
 ; First writes digits to temporary stack buffer in reverse order,
-; then copies them to destination buffer in direct order.
+; then copies them to destination buffer in direct order
 ;
 ; Arguments:
 ;   rdi = unsigned 64-bit number
@@ -255,7 +260,7 @@ specifier:
     dq case_b               ; third  option: %b
     dq case_o               ; fourth option: %o
     dq case_d               ; fifth  option: %d
-    dq case_default         ; last   option: come back to @@cycle
+    dq case_default         ; last   option: come back to cycle
 
 ;---------------------------------------------------------------------------------------------------------------------
 section .data
@@ -265,7 +270,7 @@ SPECIFIERS_ARRAY_LEN    equ 6
 FIRST_SAVED_ARG_OFFSET  equ 24
 NUM_OF_SAVED_ARG_REGS   equ 5
 
-msg:                    db "%d", 0
+msg:                    db "%%", 0
 string:                 db "Sickfault", 0
 specifiers_array:       db 'c', 's', 'x', 'b', 'o', 'd'
 hex_digits:             db "0123456789abcdef"
