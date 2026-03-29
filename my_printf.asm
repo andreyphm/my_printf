@@ -2,20 +2,7 @@ section .text
 
 %include "macros.inc"
 
-global _start                       ; predefined entry points names
-global my_printf
-
-_start:         call main
-
-                mov rax, 0x3c             ; exit64 (rdi = error code)
-                xor rdi, rdi
-                syscall
-
-;---------------------------------------------------------------------------------------------------------------------                
-main:           mov rdi, msg
-                mov rsi, -20
-                call my_printf
-                ret
+global my_printf                        ; predefined entry points names
 
 ;---------------------------------------------------------------------------------------------------------------------
 ; Output message to console
@@ -127,8 +114,9 @@ search_next:            inc r8
                             push rdx
 
                             mov rdi, qword [r11 + FIRST_SAVED_ARG_OFFSET]
+                            movsxd rdi, edi                                 ; for correct 64-bit interpretation (because int is 32 bit)
                             test rdi, rdi
-                            jns case_d_positive                           ; if rdi >= 0 then jmp
+                            jns case_d_positive                             ; if rdi >= 0 then jmp
                             mov byte [output_buffer + r13], '-'
                             inc r13
                             neg rdi
@@ -270,8 +258,6 @@ SPECIFIERS_ARRAY_LEN    equ 6
 FIRST_SAVED_ARG_OFFSET  equ 24
 NUM_OF_SAVED_ARG_REGS   equ 5
 
-msg:                    db "%%", 0
-string:                 db "Sickfault", 0
 specifiers_array:       db 'c', 's', 'x', 'b', 'o', 'd'
 hex_digits:             db "0123456789abcdef"
 bin_digits:             db "01"
