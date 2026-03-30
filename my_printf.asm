@@ -89,7 +89,7 @@ search_next:            inc r8
                                             inc rsi
                                             inc r13
                                             jmp copy_string
-                                            stop_copy:     pop rsi
+                                            stop_copy:      pop rsi
                                                             add r11, 8
                                                             inc r10
                                                             pop rax
@@ -181,9 +181,9 @@ go_to_stack_args:   cmp r10, NUM_OF_SAVED_ARG_REGS
 .exit:              ret
 
 ;---------------------------------------------------------------------------------------------------------------------
-; Converts unsigned 64-bit number to string in arbitrary base
+; Converts unsigned 64-bit number to string in arbitrary base.
 ; First writes digits to temporary stack buffer in reverse order,
-; then copies them to destination buffer in direct order
+; then copies them to destination buffer in direct order.
 ;
 ; Arguments:
 ;   rdi = unsigned 64-bit number
@@ -197,7 +197,9 @@ go_to_stack_args:   cmp r10, NUM_OF_SAVED_ARG_REGS
 ; Destroy:
 ;   rcx, r8, rdx, rsi
 ;---------------------------------------------------------------------------------------------------------------------
-uint_to_buffer:     push r12
+uint_to_buffer:     push r9
+                    push r11
+                    push r12
                     push r13
 
                     mov r12, rsi            ; r12 = destination buffer
@@ -205,26 +207,46 @@ uint_to_buffer:     push r12
                     sub rsp, 64             ; enough for binary 64-bit representation (the maximum that will be required)
                     lea rsi, [rsp + 63]     ; rsi = pointer to end of temp buffer
                     mov rax, rdi
-                    xor rcx, rcx            ; digit counter
+                    xor r11, r11            ; digit counter
 
                     test rax, rax
-                    jnz .convert
+                    jnz .check_base
                     mov byte [rsi], '0'
-                    mov rcx, 1
+                    mov r11, 1
                     jmp .prepare_copy       ; process zero as a specific input
 
-.convert:           xor rdx, rdx
+.check_base:        mov r8, rbx
+                    dec r8
+                    test rbx, r8    
+                    jz .convert_pow2        ; if rbx == 2^n then jump
+
+.convert_div:       xor rdx, rdx
                     div rbx                 ; rax /= rbx, rdx = rax % rbx
                     mov r8b, [r13 + rdx]
                     mov [rsi], r8b
                     dec rsi
-                    inc rcx
+                    inc r11
                     test rax, rax
-                    jnz .convert
+                    jnz .convert_div
+                    inc rsi
+                    jmp .prepare_copy
+
+.convert_pow2:      mov r9, rbx
+                    dec r9                  ; r9 = mask = base - 1
+                    bsf rcx, rbx            ; rcx = log2(base)
+.pow2_loop:         mov r8, rax
+                    and r8, r9
+                    mov r8b, [r13 + r8]
+                    mov [rsi], r8b
+                    dec rsi
+                    inc r11
+                    shr rax, cl
+                    test rax, rax
+                    jnz .pow2_loop
                     inc rsi
 
-.prepare_copy:      mov rax, rcx            ; return value = length of number
-
+.prepare_copy:      mov rax, r11            ; return value = length of number
+                    mov rcx, r11            ; rcx = copy counter
 .copy:              mov r8b, [rsi]
                     mov [r12], r8b
                     inc rsi
@@ -235,6 +257,8 @@ uint_to_buffer:     push r12
                     add rsp, 64             ; restore rsp
                     pop r13
                     pop r12
+                    pop r11
+                    pop r9
                     ret
 
 ;---------------------------------------------------------------------------------------------------------------------
